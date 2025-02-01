@@ -3,6 +3,6 @@ runcmd:
   - |
     export GITHUB_ACTIONS_RUNNER_SERVICE_TEMPLATE=/opt/actions.runner.service.template
     cd /home/runner/actions-runner/
-    sudo -u runner ./config.sh --unattended --ephemeral --url {{URL}} --token {{TOKEN}}
+    sudo -u runner ./config.sh --unattended --ephemeral --url {{URL}} --token {{TOKEN}} --labels {{LABELS}}
     ./svc.sh install runner
     ./svc.sh start

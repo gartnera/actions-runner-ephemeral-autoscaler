@@ -11,8 +11,9 @@ var CloudInitPrepare string
 //go:embed cloud-init-start.yml
 var cloudInitStartTemplate string
 
-func GetCloudInitStart(url, token string) string {
+func GetCloudInitStart(url, token, labels string) string {
 	conf := strings.ReplaceAll(cloudInitStartTemplate, "{{URL}}", url)
 	conf = strings.ReplaceAll(conf, "{{TOKEN}}", token)
+	conf = strings.ReplaceAll(conf, "{{LABELS}}", labels)
 	return conf
 }

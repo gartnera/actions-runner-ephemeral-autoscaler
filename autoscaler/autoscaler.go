@@ -10,6 +10,7 @@ import (
 
 type AutoscalerConfig struct {
 	TargetIdle int
+	Labels     string
 }
 
 type RunnerTokenProvider interface {
@@ -45,7 +46,7 @@ func (a *Autoscaler) Autoscale(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("get runner token: %w", err)
 		}
-		err = a.provider.CreateRunner(ctx, url, token)
+		err = a.provider.CreateRunner(ctx, url, token, a.config.Labels)
 		if err != nil {
 			return fmt.Errorf("create runner: %w", err)
 		}

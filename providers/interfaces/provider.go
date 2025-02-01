@@ -23,7 +23,7 @@ type Provider interface {
 	PrepareImage(ctx context.Context) error
 
 	// CreateRunner creates a new runner instance
-	CreateRunner(ctx context.Context, url, token string) error
+	CreateRunner(ctx context.Context, url, token, labels string) error
 
 	// RunnerDisposition returns the current state of runners
 	RunnerDisposition(ctx context.Context) (RunnerDispositionMetrics, error)
