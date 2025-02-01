@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"time"
@@ -31,6 +32,17 @@ func (p *ActionsRepoTokenProvider) Token(ctx context.Context) (string, error) {
 }
 
 func main() {
+	org := flag.String("org", os.Getenv("GITHUB_ORG"), "GitHub organization name")
+	repo := flag.String("repo", os.Getenv("GITHUB_REPO"), "GitHub repository name")
+	labels := flag.String("labels", "", "Runner labels")
+	targetIdle := flag.Int("target-idle", 1, "Target number of idle runners")
+	flag.Parse()
+
+	if *org == "" || *repo == "" || *labels == "" {
+		flag.Usage()
+		os.Exit(1)
+	}
+
 	ctx := context.Background()
 	provider, err := lxd.New()
 	if err != nil {
@@ -41,8 +53,8 @@ func main() {
 	tc := oauth2.NewClient(ctx, ts)
 	tokenProvider := &ActionsRepoTokenProvider{
 		Client: github.NewClient(tc),
-		Org:    os.Args[1],
-		Repo:   os.Args[2],
+		Org:    *org,
+		Repo:   *repo,
 	}
 
 	if _, ok := os.LookupEnv("DO_PREPARE"); ok {
@@ -53,8 +65,8 @@ func main() {
 	}
 
 	autoscaler := autoscaler.New(provider, tokenProvider, autoscaler.AutoscalerConfig{
-		TargetIdle: 1,
-		Labels:     os.Args[3],
+		TargetIdle: *targetIdle,
+		Labels:     *labels,
 	})
 
 	for {
@@ -64,5 +76,4 @@ func main() {
 		}
 		time.Sleep(time.Second * 2)
 	}
-
 }
