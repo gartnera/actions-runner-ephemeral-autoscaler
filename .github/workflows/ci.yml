@@ -43,7 +43,18 @@ jobs:
           DO_PREPARE: true
           GITHUB_TOKEN: ${{ secrets.TEST_REPO_PAT }}
         run: |
-          actions-runner-ephemeral-autoscaler-lxd ${{ vars.TEST_ORG }} ${{ vars.TEST_REPO }} ${{ env.RUNNER_LABEL }} &
+          actions-runner-ephemeral-autoscaler-lxd -org ${{ vars.TEST_ORG }} -repo ${{ vars.TEST_REPO }} -labels ${{ env.RUNNER_LABEL }} &
+          sleep 1
+
+      - name: wait for autoscaler to be ready
+        shell: bash {0}
+        run: |
+          while ! curl -s localhost:9090/metrics | grep -q 'actions_runner_autoscaler_idle.*[1-9]'; do
+            echo "Waiting for autoscaler to be ready..."
+            curl -s localhost:9090/metrics | grep actions_runner_autoscaler
+            sleep 5
+          done
+
       - name: run test workflow
         env:
           GITHUB_TOKEN: ${{ secrets.TEST_REPO_PAT }}

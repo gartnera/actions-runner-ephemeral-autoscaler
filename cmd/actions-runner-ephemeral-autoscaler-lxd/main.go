@@ -4,12 +4,14 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"time"
 
 	"github.com/gartnera/actions-runner-ephemeral-autoscaler/autoscaler"
 	"github.com/gartnera/actions-runner-ephemeral-autoscaler/providers/lxd"
 	"github.com/google/go-github/v68/github"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/oauth2"
 )
 
@@ -56,6 +58,9 @@ func main() {
 		Org:    *org,
 		Repo:   *repo,
 	}
+
+	http.Handle("/metrics", promhttp.Handler())
+	go http.ListenAndServe(":9090", nil)
 
 	if _, ok := os.LookupEnv("DO_PREPARE"); ok {
 		err = provider.PrepareImage(ctx)
