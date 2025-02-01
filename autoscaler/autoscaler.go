@@ -6,6 +6,35 @@ import (
 	"log"
 
 	"github.com/gartnera/actions-runner-ephemeral-autoscaler/providers/interfaces"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+)
+
+const (
+	metricsNamespace = "actions_runner_autoscaler"
+)
+
+var (
+	totalRunners = promauto.NewGauge(prometheus.GaugeOpts{
+		Namespace: metricsNamespace,
+		Name:      "total",
+		Help:      "Total number of GitHub Actions runners",
+	})
+	startingRunners = promauto.NewGauge(prometheus.GaugeOpts{
+		Namespace: metricsNamespace,
+		Name:      "starting",
+		Help:      "Number of GitHub Actions runners in starting state",
+	})
+	idleRunners = promauto.NewGauge(prometheus.GaugeOpts{
+		Namespace: metricsNamespace,
+		Name:      "idle",
+		Help:      "Number of GitHub Actions runners in idle state",
+	})
+	activeRunners = promauto.NewGauge(prometheus.GaugeOpts{
+		Namespace: metricsNamespace,
+		Name:      "active",
+		Help:      "Number of GitHub Actions runners in active state",
+	})
 )
 
 type AutoscalerConfig struct {
@@ -32,13 +61,24 @@ func New(provider interfaces.Provider, tokenProvider RunnerTokenProvider, config
 	}
 }
 
+func updateMetrics(metrics interfaces.RunnerDispositionMetrics) {
+	totalRunners.Set(float64(metrics.TotalCount()))
+	startingRunners.Set(float64(metrics.StartingCount()))
+	idleRunners.Set(float64(metrics.IdleCount()))
+	activeRunners.Set(float64(metrics.ActiveCount()))
+}
+
 func (a *Autoscaler) Autoscale(ctx context.Context) error {
 	metrics, err := a.provider.RunnerDisposition(ctx)
 	if err != nil {
 		return fmt.Errorf("get runner disposition")
 	}
+
+	updateMetrics(metrics)
+
 	log.Printf("status -> starting: %d, idle: %d, active: %d, total: %d", metrics.StartingCount(), metrics.IdleCount(), metrics.ActiveCount(), metrics.TotalCount())
 	idleStartingCount := metrics.StartingCount() + metrics.IdleCount()
+
 	for i := idleStartingCount; i < a.config.TargetIdle; i++ {
 		log.Printf("creating instance (%d < %d)", i, a.config.TargetIdle)
 		url := a.tokenProvider.URL()
