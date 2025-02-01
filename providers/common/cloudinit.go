@@ -14,6 +14,6 @@ var cloudInitStartTemplate string
 func GetCloudInitStart(url, token, labels string) string {
 	conf := strings.ReplaceAll(cloudInitStartTemplate, "{{URL}}", url)
 	conf = strings.ReplaceAll(conf, "{{TOKEN}}", token)
-	conf = strings.ReplaceAll(conf, "{{LABELS}}", token)
+	conf = strings.ReplaceAll(conf, "{{LABELS}}", labels)
 	return conf
 }
