@@ -60,8 +60,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.TEST_REPO_PAT }}
         run: |
           gh workflow run test.yml --repo ${{ vars.TEST_ORG }}/${{ vars.TEST_REPO }} -f runner-label=${{ env.RUNNER_LABEL }}
-          sleep 10
+          sleep 5
           # Get the ID of the workflow run we just started
           workflow_id=$(gh run list --repo ${{ vars.TEST_ORG }}/${{ vars.TEST_REPO }} --workflow=test.yml --limit 1 --json databaseId --jq '.[0].databaseId')
+          echo "Workflow URL: https://github.com/${{ vars.TEST_ORG }}/${{ vars.TEST_REPO }}/actions/runs/$workflow_id"
           echo "Waiting for workflow run $workflow_id to complete..."
           gh run watch --exit-status --repo ${{ vars.TEST_ORG }}/${{ vars.TEST_REPO }} $workflow_id
