@@ -132,9 +132,9 @@ func (p *Provider) PrepareImage(ctx context.Context) error {
 	return nil
 }
 
-func (p *Provider) CreateRunner(ctx context.Context, url, token string) error {
+func (p *Provider) CreateRunner(ctx context.Context, url, token, labels string) error {
 	id := fmt.Sprintf("actions-runner-ephemeral-%s", lo.RandomString(5, lo.LettersCharset))
-	cloudInitConf := common.GetCloudInitStart(url, token)
+	cloudInitConf := common.GetCloudInitStart(url, token, labels)
 	createOp, err := p.client.CreateInstance(api.InstancesPost{
 		Name: id,
 		Source: api.InstanceSource{

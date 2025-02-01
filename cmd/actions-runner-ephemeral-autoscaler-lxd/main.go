@@ -54,6 +54,7 @@ func main() {
 
 	autoscaler := autoscaler.New(provider, tokenProvider, autoscaler.AutoscalerConfig{
 		TargetIdle: 1,
+		Labels:     os.Args[3],
 	})
 
 	for {

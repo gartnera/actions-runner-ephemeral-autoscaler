@@ -1,0 +1,55 @@
+name: ci
+
+on:
+  push:
+    branches:
+    - main
+  pull_request:
+  
+concurrency: 
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-lxd:
+    runs-on: ubuntu-22.04
+    env:
+      # this is specifically important to the test step
+      LXD_SOCKET: /var/snap/lxd/common/lxd/unix.socket
+      RUNNER_LABEL: ci-${{ github.run_id }}-${{ github.run_number}}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: canonical/setup-lxd@8fb85546a934dfb994becf81341dd387ffe6aabb
+        with:
+          # we use this version specifically because it should already be installed on
+          # ubutnu 22.04
+          channel: 5.0/stable
+      # for whatever reason setup-lxd does not handle this correctly
+      - name: fix permissions
+        run: |
+          id
+          sudo chown root:adm "$LXD_SOCKET"
+          ls -lth "$LXD_SOCKET"
+          lxc ls
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: install autoscaler
+        run: |
+          cd cmd/actions-runner-ephemeral-autoscaler-lxd
+          go install
+      - name: start autoscaler
+        env:
+          DO_PREPARE: true
+          GITHUB_TOKEN: ${{ secrets.TEST_REPO_PAT }}
+        run: |
+          actions-runner-ephemeral-autoscaler-lxd ${{ vars.TEST_ORG }} ${{ vars.TEST_REPO }} ${{ env.RUNNER_LABEL }} &
+      - name: run test workflow
+        env:
+          GITHUB_TOKEN: ${{ secrets.TEST_REPO_PAT }}
+        run: |
+          gh workflow run test.yml --repo ${{ vars.TEST_ORG }}/${{ vars.TEST_REPO }} -f runner-label=${{ env.RUNNER_LABEL }}
+          # Get the ID of the workflow run we just started
+          workflow_id=$(gh run list --repo ${{ vars.TEST_ORG }}/${{ vars.TEST_REPO }} --workflow=test.yml --json databaseId --jq '.[0].databaseId')
+          echo "Waiting for workflow run $workflow_id to complete..."
+          gh run watch $workflow_id --repo ${{ vars.TEST_ORG }}/${{ vars.TEST_REPO }}
