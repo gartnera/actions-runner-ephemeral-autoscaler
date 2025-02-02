@@ -46,14 +46,25 @@ jobs:
           actions-runner-ephemeral-autoscaler-lxd -org ${{ vars.TEST_ORG }} -repo ${{ vars.TEST_REPO }} -labels ${{ env.RUNNER_LABEL }} &
           sleep 1
 
-      - name: wait for autoscaler to be ready
+      - name: wait for autoscaler start preparing
+        timeout-minutes: 1
         shell: bash {0}
-        run: |
-          while ! curl -s localhost:9090/metrics | grep -q 'actions_runner_autoscaler_idle.*[1-9]'; do
-            echo "Waiting for autoscaler to be ready..."
-            curl -s localhost:9090/metrics | grep actions_runner_autoscaler
-            sleep 5
-          done
+        run: ./scripts/wait-metric-expr.sh preparing 1
+
+      - name: wait for autoscaler finish preparing
+        timeout-minutes: 15
+        shell: bash {0}
+        run: ./scripts/wait-metric-expr.sh preparing 0
+
+      - name: wait for autoscaler starting state
+        timeout-minutes: 5
+        shell: bash {0}
+        run: ./scripts/wait-metric-expr.sh starting 1
+      
+      - name: wait for autoscaler idle state
+        timeout-minutes: 5
+        shell: bash {0}
+        run: ./scripts/wait-metric-expr.sh idle 1
 
       - name: run test workflow
         env:

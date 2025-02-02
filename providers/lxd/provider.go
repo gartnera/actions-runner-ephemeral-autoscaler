@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -31,9 +32,26 @@ func New() (*Provider, error) {
 	}, nil
 }
 
+// ImageCreatedAt gets the creation timestamp of the latest image.
+// This is typically used to determine if we need to call PrepareImage.
+func (p *Provider) ImageCreatedAt(ctx context.Context) (time.Time, error) {
+	alias, _, err := p.client.GetImageAlias(imageAliasName)
+	if err != nil {
+		if api.StatusErrorCheck(err, http.StatusNotFound) {
+			return time.Time{}, nil
+		}
+		return time.Time{}, fmt.Errorf("get image alias: %w", err)
+	}
+	image, _, err := p.client.GetImage(alias.Target)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("get image: %w", err)
+	}
+	return image.CreatedAt, nil
+}
+
 // PrepareImage preheats an image so that all required packages are installed
 func (p *Provider) PrepareImage(ctx context.Context) error {
-	id := fmt.Sprintf("actions-runner-ephemeral-prepare")
+	id := fmt.Sprintf("%s-prepare", imageAliasName)
 	createOp, err := p.client.CreateInstance(api.InstancesPost{
 		Name: id,
 		Source: api.InstanceSource{
@@ -86,6 +104,9 @@ func (p *Provider) PrepareImage(ctx context.Context) error {
 		Source: &api.ImagesPostSource{
 			Type: "container",
 			Name: id,
+		},
+		ImagePut: api.ImagePut{
+			ExpiresAt: time.Now().Add(time.Hour * 24 * 7),
 		},
 	}, nil)
 	if err != nil {

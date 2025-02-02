@@ -1,6 +1,9 @@
 package interfaces
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // RunnerDispositionMetrics represents the metrics of runner instances in different states
 type RunnerDispositionMetrics interface {
@@ -19,6 +22,7 @@ type RunnerDispositionMetrics interface {
 
 // Provider represents a compute provider interface
 type Provider interface {
+	ImageCreatedAt(ctx context.Context) (time.Time, error)
 	// PrepareImage preheats an image with required packages
 	PrepareImage(ctx context.Context) error
 
