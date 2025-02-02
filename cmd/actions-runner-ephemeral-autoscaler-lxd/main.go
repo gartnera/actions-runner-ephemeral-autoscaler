@@ -62,20 +62,15 @@ func main() {
 	http.Handle("/metrics", promhttp.Handler())
 	go http.ListenAndServe(":9090", nil)
 
-	if _, ok := os.LookupEnv("DO_PREPARE"); ok {
-		err = provider.PrepareImage(ctx)
-		if err != nil {
-			panic(err)
-		}
-	}
-
 	autoscaler := autoscaler.New(provider, tokenProvider, autoscaler.AutoscalerConfig{
 		TargetIdle: *targetIdle,
 		Labels:     *labels,
 	})
 
-	for {
-		err := autoscaler.Autoscale(ctx)
+	for i := 0; ; i++ {
+		// check prepare every 500 iterations (including first)
+		shouldCheckPrepare := i%500 == 0
+		err := autoscaler.Autoscale(ctx, shouldCheckPrepare)
 		if err != nil {
 			fmt.Printf("autoscale failed: %v\n", err)
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/gartnera/actions-runner-ephemeral-autoscaler/providers/interfaces"
 	"github.com/prometheus/client_golang/prometheus"
@@ -12,6 +13,7 @@ import (
 
 const (
 	metricsNamespace = "actions_runner_autoscaler"
+	maximumImageAge  = time.Hour * 24
 )
 
 var (
@@ -34,6 +36,11 @@ var (
 		Namespace: metricsNamespace,
 		Name:      "active",
 		Help:      "Number of GitHub Actions runners in active state",
+	})
+	preparingRunners = promauto.NewGauge(prometheus.GaugeOpts{
+		Namespace: metricsNamespace,
+		Name:      "preparing",
+		Help:      "Number of instances running for image preparation",
 	})
 )
 
@@ -68,7 +75,31 @@ func updateMetrics(metrics interfaces.RunnerDispositionMetrics) {
 	activeRunners.Set(float64(metrics.ActiveCount()))
 }
 
-func (a *Autoscaler) Autoscale(ctx context.Context) error {
+func (a *Autoscaler) maybePrepare(ctx context.Context) error {
+	createdAt, err := a.provider.ImageCreatedAt(ctx)
+	if err != nil {
+		return fmt.Errorf("get image created at: %w", err)
+	}
+	createdLag := time.Now().Sub(createdAt)
+	if createdLag < maximumImageAge {
+		return nil
+	}
+	preparingRunners.Inc()
+	defer preparingRunners.Dec()
+	err = a.provider.PrepareImage(ctx)
+	if err != nil {
+		return fmt.Errorf("prepare image: %w", err)
+	}
+	return nil
+}
+
+func (a *Autoscaler) Autoscale(ctx context.Context, checkPrepare bool) error {
+	if checkPrepare {
+		err := a.maybePrepare(ctx)
+		if err == nil {
+			log.Default().Printf("error when preparing: %v", err)
+		}
+	}
 	metrics, err := a.provider.RunnerDisposition(ctx)
 	if err != nil {
 		return fmt.Errorf("get runner disposition")
