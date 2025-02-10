@@ -1,0 +1,7 @@
+#cloud-config
+
+packages:
+  - gcc
+
+runcmd:
+  - touch /test1234

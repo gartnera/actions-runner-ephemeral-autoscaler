@@ -24,11 +24,15 @@ type RunnerDispositionMetrics interface {
 type Provider interface {
 	ImageCreatedAt(ctx context.Context) (time.Time, error)
 	// PrepareImage preheats an image with required packages
-	PrepareImage(ctx context.Context) error
+	PrepareImage(ctx context.Context, opts PrepareOptions) error
 
 	// CreateRunner creates a new runner instance
 	CreateRunner(ctx context.Context, url, token, labels string) error
 
 	// RunnerDisposition returns the current state of runners
 	RunnerDisposition(ctx context.Context) (RunnerDispositionMetrics, error)
+}
+
+type PrepareOptions struct {
+	CustomCloudInitOverlay string
 }

@@ -22,7 +22,7 @@ jobs:
       - uses: canonical/setup-lxd@8fb85546a934dfb994becf81341dd387ffe6aabb
         with:
           # we use this version specifically because it should already be installed on
-          # ubutnu 22.04
+          # ubuntu 22.04
           channel: 5.0/stable
       # for whatever reason setup-lxd does not handle this correctly
       - name: fix permissions
@@ -43,37 +43,45 @@ jobs:
           DO_PREPARE: true
           GITHUB_TOKEN: ${{ secrets.TEST_REPO_PAT }}
         run: |
-          actions-runner-ephemeral-autoscaler-lxd -org ${{ vars.TEST_ORG }} -repo ${{ vars.TEST_REPO }} -labels ${{ env.RUNNER_LABEL }} &
+          actions-runner-ephemeral-autoscaler-lxd \
+            -org ${{ vars.TEST_ORG }} \
+            -repo ${{ vars.TEST_REPO }} \
+            -labels ${{ env.RUNNER_LABEL }} \
+            -custom-cloud-init ./test/cloud-init.yml \
+            > autoscaler.log 2>&1 &
           sleep 1
-
       - name: wait for autoscaler start preparing
         timeout-minutes: 1
         shell: bash {0}
-        run: ./scripts/wait-metric-expr.sh preparing 1
+        run: ./test/wait-metric-expr.sh preparing 1
 
       - name: wait for autoscaler finish preparing
         timeout-minutes: 15
         shell: bash {0}
-        run: ./scripts/wait-metric-expr.sh preparing 0
+        run: ./test/wait-metric-expr.sh preparing 0
 
       - name: wait for autoscaler starting state
         timeout-minutes: 5
         shell: bash {0}
-        run: ./scripts/wait-metric-expr.sh starting 1
+        run: ./test/wait-metric-expr.sh starting 1
       
       - name: wait for autoscaler idle state
         timeout-minutes: 5
         shell: bash {0}
-        run: ./scripts/wait-metric-expr.sh idle 1
+        run: ./test/wait-metric-expr.sh idle 1
 
       - name: run test workflow
         env:
           GITHUB_TOKEN: ${{ secrets.TEST_REPO_PAT }}
         run: |
-          gh workflow run test.yml --repo ${{ vars.TEST_ORG }}/${{ vars.TEST_REPO }} -f runner-label=${{ env.RUNNER_LABEL }}
+          gh workflow run test.yml --repo ${{ vars.TEST_ORG }}/${{ vars.TEST_REPO }} -f runner-label=${{ env.RUNNER_LABEL }} -f run-command="gcc --version; ls /test1234"
           sleep 5
           # Get the ID of the workflow run we just started
           workflow_id=$(gh run list --repo ${{ vars.TEST_ORG }}/${{ vars.TEST_REPO }} --workflow=test.yml --limit 1 --json databaseId --jq '.[0].databaseId')
           echo "Workflow URL: https://github.com/${{ vars.TEST_ORG }}/${{ vars.TEST_REPO }}/actions/runs/$workflow_id"
           echo "Waiting for workflow run $workflow_id to complete..."
           gh run watch --exit-status --repo ${{ vars.TEST_ORG }}/${{ vars.TEST_REPO }} $workflow_id
+
+      - name: dump logs on failure
+        if: ${{ failure() }}
+        run: cat autoscaler.log
