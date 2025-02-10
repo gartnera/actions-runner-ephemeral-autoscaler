@@ -43,9 +43,13 @@ jobs:
           DO_PREPARE: true
           GITHUB_TOKEN: ${{ secrets.TEST_REPO_PAT }}
         run: |
-          actions-runner-ephemeral-autoscaler-lxd -org ${{ vars.TEST_ORG }} -repo ${{ vars.TEST_REPO }} -labels ${{ env.RUNNER_LABEL }} > autoscaler.log 2>&1 &
+          actions-runner-ephemeral-autoscaler-lxd \
+            -org ${{ vars.TEST_ORG }} \
+            -repo ${{ vars.TEST_REPO }} \
+            -labels ${{ env.RUNNER_LABEL }} \
+            -custom-cloud-init ./test/cloud-init.yml \
+            > autoscaler.log 2>&1 &
           sleep 1
-
       - name: wait for autoscaler start preparing
         timeout-minutes: 1
         shell: bash {0}

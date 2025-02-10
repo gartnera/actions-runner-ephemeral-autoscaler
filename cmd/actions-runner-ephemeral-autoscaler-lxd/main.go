@@ -65,7 +65,7 @@ func main() {
 	go http.ListenAndServe(":9090", nil)
 
 	prepareOpts := interfaces.PrepareOptions{}
-	if customCloudInitPath != nil {
+	if *customCloudInitPath != "" {
 		customCloudInitBytes, err := os.ReadFile(*customCloudInitPath)
 		if err != nil {
 			panic(fmt.Errorf("reading %s: %w", *customCloudInitPath, err))
