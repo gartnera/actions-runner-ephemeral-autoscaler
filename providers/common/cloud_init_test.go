@@ -11,7 +11,7 @@ const cloudInitOverlay = `
 packages:
   - gcc
 runcmd:
-  - id
+  - myexamplecommand
 `
 
 func TestCloudInitPrepare(t *testing.T) {
@@ -19,5 +19,5 @@ func TestCloudInitPrepare(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, cloudInitPrepare, "docker-ce")
 	require.Contains(t, cloudInitPrepare, "gcc")
-	require.Contains(t, cloudInitPrepare, "id")
+	require.Contains(t, cloudInitPrepare, "myexamplecommand")
 }

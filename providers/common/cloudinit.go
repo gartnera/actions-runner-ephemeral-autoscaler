@@ -74,10 +74,7 @@ func mergeNodes(base, overlay *yaml.Node) {
 			}
 		}
 	case yaml.SequenceNode:
-		// Append each item from override (discarding its comments)
-		for _, item := range overlay.Content {
-			base.Content = append(base.Content, item.Content...)
-		}
+		base.Content = append(base.Content, overlay.Content...)
 	default:
 		// For scalars, simply override the value and tag,
 		// but leave base's comments intact.
