@@ -50,9 +50,9 @@ func (p *Provider) ImageCreatedAt(ctx context.Context) (time.Time, error) {
 }
 
 // PrepareImage preheats an image so that all required packages are installed
-func (p *Provider) PrepareImage(ctx context.Context) error {
+func (p *Provider) PrepareImage(ctx context.Context, opts interfaces.PrepareOptions) error {
 	id := fmt.Sprintf("%s-prepare", imageAliasName)
-	cloudInitPrepare, err := common.GetCloudInitPrepare(ctx)
+	cloudInitPrepare, err := common.GetCloudInitPrepare(ctx, opts.CustomCloudInitOverlay)
 	if err != nil {
 		return fmt.Errorf("get cloud init prepare: %w", err)
 	}

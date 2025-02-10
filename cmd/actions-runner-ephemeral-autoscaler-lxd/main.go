@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gartnera/actions-runner-ephemeral-autoscaler/autoscaler"
+	"github.com/gartnera/actions-runner-ephemeral-autoscaler/providers/interfaces"
 	"github.com/gartnera/actions-runner-ephemeral-autoscaler/providers/lxd"
 	"github.com/google/go-github/v68/github"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -38,6 +39,7 @@ func main() {
 	repo := flag.String("repo", os.Getenv("GITHUB_REPO"), "GitHub repository name")
 	labels := flag.String("labels", "", "Runner labels")
 	targetIdle := flag.Int("target-idle", 1, "Target number of idle runners")
+	customCloudInitPath := flag.String("custom-cloud-init", "", "Path to custom cloud init file")
 	flag.Parse()
 
 	if *org == "" || *repo == "" || *labels == "" {
@@ -62,9 +64,19 @@ func main() {
 	http.Handle("/metrics", promhttp.Handler())
 	go http.ListenAndServe(":9090", nil)
 
+	prepareOpts := interfaces.PrepareOptions{}
+	if customCloudInitPath != nil {
+		customCloudInitBytes, err := os.ReadFile(*customCloudInitPath)
+		if err != nil {
+			panic(fmt.Errorf("reading %s: %w", *customCloudInitPath, err))
+		}
+		prepareOpts.CustomCloudInitOverlay = string(customCloudInitBytes)
+	}
+
 	autoscaler := autoscaler.New(provider, tokenProvider, autoscaler.AutoscalerConfig{
-		TargetIdle: *targetIdle,
-		Labels:     *labels,
+		TargetIdle:     *targetIdle,
+		Labels:         *labels,
+		PrepareOptions: prepareOpts,
 	})
 
 	for i := 0; ; i++ {

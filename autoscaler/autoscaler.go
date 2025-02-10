@@ -45,8 +45,9 @@ var (
 )
 
 type AutoscalerConfig struct {
-	TargetIdle int
-	Labels     string
+	TargetIdle     int
+	Labels         string
+	PrepareOptions interfaces.PrepareOptions
 }
 
 type RunnerTokenProvider interface {
@@ -86,7 +87,7 @@ func (a *Autoscaler) maybePrepare(ctx context.Context) error {
 	}
 	preparingRunners.Inc()
 	defer preparingRunners.Dec()
-	err = a.provider.PrepareImage(ctx)
+	err = a.provider.PrepareImage(ctx, a.config.PrepareOptions)
 	if err != nil {
 		return fmt.Errorf("prepare image: %w", err)
 	}
