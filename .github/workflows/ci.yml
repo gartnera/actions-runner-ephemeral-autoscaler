@@ -43,7 +43,7 @@ jobs:
           DO_PREPARE: true
           GITHUB_TOKEN: ${{ secrets.TEST_REPO_PAT }}
         run: |
-          actions-runner-ephemeral-autoscaler-lxd -org ${{ vars.TEST_ORG }} -repo ${{ vars.TEST_REPO }} -labels ${{ env.RUNNER_LABEL }} &
+          actions-runner-ephemeral-autoscaler-lxd -org ${{ vars.TEST_ORG }} -repo ${{ vars.TEST_REPO }} -labels ${{ env.RUNNER_LABEL }} > autoscaler.log 2>&1 &
           sleep 1
 
       - name: wait for autoscaler start preparing
@@ -77,3 +77,7 @@ jobs:
           echo "Workflow URL: https://github.com/${{ vars.TEST_ORG }}/${{ vars.TEST_REPO }}/actions/runs/$workflow_id"
           echo "Waiting for workflow run $workflow_id to complete..."
           gh run watch --exit-status --repo ${{ vars.TEST_ORG }}/${{ vars.TEST_REPO }} $workflow_id
+
+      - name: dump logs on failure
+        if: ${{ failure() }}
+        run: cat autoscaler.log

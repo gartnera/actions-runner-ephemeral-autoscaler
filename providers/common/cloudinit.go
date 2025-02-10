@@ -34,7 +34,7 @@ func GetCloudInitPrepare(ctx context.Context, customInitOverlay string) (string,
 
 	mergeNodes(baseNode.Content[0], overlayNode.Content[0])
 
-	finalConf, err := yaml.Marshal(baseNode)
+	finalConf, err := yaml.Marshal(&baseNode)
 	if err != nil {
 		return "", fmt.Errorf("marshaling final conf: %w", err)
 	}
