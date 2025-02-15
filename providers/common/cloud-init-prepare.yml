@@ -8,18 +8,24 @@ users:
     system: true
 
 write_files:
-  - path: /opt/runner-hooks/idle/10-set-idle.sh
+  - path: /opt/runner-hooks/idle/10-set-actions-runner-state
     owner: 'root:root'
     permissions: '0755'
     content: |
       #!/bin/bash
       echo "idle" > /tmp/actions-runner-state
-  - path: /opt/runner-hooks/active/10-set-active.sh
+  - path: /opt/runner-hooks/job-started/10-set-actions-runner-state
     owner: 'root:root'
     permissions: '0755'
     content: |
       #!/bin/bash
       echo "active" > /tmp/actions-runner-state
+  - path: /opt/runner-hooks/job-started.sh
+    owner: 'root:root'
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      /usr/bin/run-parts /opt/runner-hooks/job-started
   - path: /opt/actions.runner.service.template
     owner: 'root:root'
     permissions: '0644'
@@ -34,15 +40,13 @@ write_files:
       ExecStopPost=/usr/bin/sudo /usr/sbin/poweroff
       User={{User}}
       WorkingDirectory={{RunnerRoot}}
-      Environment=ACTIONS_RUNNER_HOOK_JOB_STARTED=/usr/bin/run-parts /opt/runner-hooks/active
+      Environment=ACTIONS_RUNNER_HOOK_JOB_STARTED=/opt/runner-hooks/job-started.sh
       KillMode=process
       KillSignal=SIGTERM
       TimeoutStopSec=5min
 
       [Install]
       WantedBy=multi-user.target
-
-runcmd:
   - curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
   - echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
   - apt-get update
