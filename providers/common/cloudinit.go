@@ -13,7 +13,7 @@ import (
 //go:embed cloud-init-prepare.yml
 var cloudInitPrepare string
 
-func GetCloudInitPrepare(ctx context.Context, customInitOverlay string) (string, error) {
+func GetCloudInitPrepare(ctx context.Context, customInitOverlays ...string) (string, error) {
 	client := github.NewClient(nil)
 	release, _, err := client.Repositories.GetLatestRelease(ctx, "actions", "runner")
 	if err != nil {
@@ -22,17 +22,21 @@ func GetCloudInitPrepare(ctx context.Context, customInitOverlay string) (string,
 	runnerVersion := strings.TrimPrefix(release.GetTagName(), "v")
 	baseConfStr := strings.ReplaceAll(cloudInitPrepare, "{{RUNNER_VERSION}}", runnerVersion)
 
-	var baseNode, overlayNode yaml.Node
+	var baseNode yaml.Node
 	err = yaml.Unmarshal([]byte(baseConfStr), &baseNode)
 	if err != nil {
 		return "", fmt.Errorf("decoding base config: %w", err)
 	}
-	err = yaml.Unmarshal([]byte(customInitOverlay), &overlayNode)
-	if err != nil {
-		return "", fmt.Errorf("decoding custom overlay: %w", err)
-	}
 
-	mergeNodes(baseNode.Content[0], overlayNode.Content[0])
+	// Apply each overlay in sequence
+	for _, overlay := range customInitOverlays {
+		var overlayNode yaml.Node
+		err = yaml.Unmarshal([]byte(overlay), &overlayNode)
+		if err != nil {
+			return "", fmt.Errorf("decoding custom overlay: %w", err)
+		}
+		mergeNodes(baseNode.Content[0], overlayNode.Content[0])
+	}
 
 	finalConf, err := yaml.Marshal(&baseNode)
 	if err != nil {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gartnera/actions-runner-ephemeral-autoscaler/autoscaler"
+	"github.com/gartnera/actions-runner-ephemeral-autoscaler/providers/gcp"
 	"github.com/gartnera/actions-runner-ephemeral-autoscaler/providers/githubtoken"
 	"github.com/gartnera/actions-runner-ephemeral-autoscaler/providers/interfaces"
 	"github.com/gartnera/actions-runner-ephemeral-autoscaler/providers/lxd"
@@ -31,16 +32,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	if *providerName != "lxd" {
-		fmt.Printf("Invalid provider: %s. Only 'lxd' is supported\n", *providerName)
-		flag.Usage()
-		os.Exit(1)
-	}
-
 	var provider interfaces.Provider
+	var err error
 
 	ctx := context.Background()
-	provider, err := lxd.New()
+	switch *providerName {
+	case "lxd":
+		provider, err = lxd.New()
+	case "gcp":
+		provider, err = gcp.New()
+	default:
+		fmt.Printf("Invalid provider %s, options are lxd|gcp", *providerName)
+		os.Exit(2)
+	}
 	if err != nil {
 		panic(err)
 	}

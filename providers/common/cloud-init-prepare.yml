@@ -8,13 +8,13 @@ users:
     system: true
 
 write_files:
-  - path: /opt/set-idle.sh
+  - path: /opt/runner-hooks/idle/10-set-idle.sh
     owner: 'root:root'
     permissions: '0755'
     content: |
       #!/bin/bash
       echo "idle" > /tmp/actions-runner-state
-  - path: /opt/set-active.sh
+  - path: /opt/runner-hooks/active/10-set-active.sh
     owner: 'root:root'
     permissions: '0755'
     content: |
@@ -27,18 +27,18 @@ write_files:
       [Unit]
       Description={{Description}}
       After=network.target
-      
+
       [Service]
       ExecStart={{RunnerRoot}}/runsvc.sh
-      ExecStartPost=/opt/set-idle.sh
+      ExecStartPost=/usr/bin/run-parts /opt/runner-hooks/idle
       ExecStopPost=/usr/bin/sudo /usr/sbin/poweroff
       User={{User}}
       WorkingDirectory={{RunnerRoot}}
-      Environment=ACTIONS_RUNNER_HOOK_JOB_STARTED=/opt/set-active.sh
+      Environment=ACTIONS_RUNNER_HOOK_JOB_STARTED=/usr/bin/run-parts /opt/runner-hooks/active
       KillMode=process
       KillSignal=SIGTERM
       TimeoutStopSec=5min
-      
+
       [Install]
       WantedBy=multi-user.target
 

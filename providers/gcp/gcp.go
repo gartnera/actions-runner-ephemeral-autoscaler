@@ -13,8 +13,12 @@ import (
 	"github.com/samber/lo"
 )
 
-const actionsRunnerEphemeralKey = "user.actions-runner-ephemeral"
-const imageAliasLabel = "actions-runner-ephemeral"
+const labelStatusPreparing = "preparing"
+const labelStatusStarting = "starting"
+
+const typeLabelValue = "actions-runner-ephemeral"
+
+var typeLabelFilter = fmt.Sprintf("labels.type=%s", typeLabelValue)
 
 type Provider struct {
 	client    *compute.Service
@@ -37,7 +41,7 @@ func New() (*Provider, error) {
 }
 
 func (p *Provider) getLatestImage(ctx context.Context) (*compute.Image, error) {
-	resp, err := p.client.Images.List(p.projectID).Filter(fmt.Sprintf("labels.type=%s", imageAliasLabel)).Context(ctx).OrderBy("createdTimestamp desc").Do()
+	resp, err := p.client.Images.List(p.projectID).Filter(typeLabelFilter).Context(ctx).OrderBy("createdTimestamp desc").Do()
 	if err != nil {
 		return nil, fmt.Errorf("list images: %w", err)
 	}
@@ -61,7 +65,7 @@ func (p *Provider) ImageCreatedAt(ctx context.Context) (time.Time, error) {
 }
 
 func (p *Provider) PrepareImage(ctx context.Context, opts interfaces.PrepareOptions) error {
-	instanceName := fmt.Sprintf("%s-prepare", imageAliasLabel)
+	instanceName := fmt.Sprintf("%s-prepare", typeLabelValue)
 	cloudInitPrepare, err := common.GetCloudInitPrepare(ctx, opts.CustomCloudInitOverlay)
 	if err != nil {
 		return fmt.Errorf("get cloud init prepare: %w", err)
@@ -69,7 +73,11 @@ func (p *Provider) PrepareImage(ctx context.Context, opts interfaces.PrepareOpti
 
 	instance := &compute.Instance{
 		Name:        instanceName,
-		MachineType: fmt.Sprintf("zones/%s/machineTypes/e2-medium", p.zone),
+		MachineType: fmt.Sprintf("zones/%s/machineTypes/e2-micro", p.zone),
+		Labels: map[string]string{
+			"type":   typeLabelValue,
+			"status": labelStatusPreparing,
+		},
 		Disks: []*compute.AttachedDisk{
 			{
 				AutoDelete: true,
@@ -129,15 +137,15 @@ func (p *Provider) PrepareImage(ctx context.Context, opts interfaces.PrepareOpti
 			break
 		}
 
-		time.Sleep(10 * time.Second)
+		time.Sleep(5 * time.Second)
 	}
 
 	// Create new image
-	newImageName := fmt.Sprintf("%s-%s", imageAliasLabel, lo.RandomString(5, lo.LettersCharset))
+	newImageName := fmt.Sprintf("%s-%s", typeLabelValue, lo.RandomString(5, lo.LettersCharset))
 	imageOp, err := p.client.Images.Insert(p.projectID, &compute.Image{
 		Name: newImageName,
 		Labels: map[string]string{
-			"type": imageAliasLabel,
+			"type": typeLabelValue,
 		},
 		SourceDisk: fmt.Sprintf("projects/%s/zones/%s/disks/%s",
 			p.projectID, p.zone, instanceName),
@@ -154,7 +162,7 @@ func (p *Provider) PrepareImage(ctx context.Context, opts interfaces.PrepareOpti
 	}
 
 	// Delete old images
-	images, err := p.client.Images.List(p.projectID).Filter(fmt.Sprintf("labels.type=%s", imageAliasLabel)).Context(ctx).Do()
+	images, err := p.client.Images.List(p.projectID).Filter(typeLabelFilter).Context(ctx).Do()
 	if err != nil {
 		return fmt.Errorf("list old images: %w", err)
 	}
@@ -191,7 +199,11 @@ func (p *Provider) CreateRunner(ctx context.Context, url, token, labels string) 
 
 	instance := &compute.Instance{
 		Name:        instanceName,
-		MachineType: fmt.Sprintf("zones/%s/machineTypes/e2-medium", p.zone),
+		MachineType: fmt.Sprintf("zones/%s/machineTypes/e2-micro", p.zone),
+		Labels: map[string]string{
+			"type":   typeLabelValue,
+			"status": labelStatusStarting,
+		},
 		Disks: []*compute.AttachedDisk{
 			{
 				AutoDelete: true,
@@ -253,4 +265,46 @@ func (p *Provider) waitOperation(ctx context.Context, op *compute.Operation) err
 
 		time.Sleep(time.Second * 5)
 	}
+}
+
+type disposition struct {
+	startingCount  int
+	idleCount      int
+	activeCount    int
+	preparingCount int
+}
+
+func (d disposition) TotalCount() int {
+	return d.activeCount + d.idleCount + d.startingCount
+}
+func (d disposition) StartingCount() int {
+	return d.startingCount
+}
+func (d disposition) IdleCount() int {
+	return d.idleCount
+}
+func (d disposition) ActiveCount() int {
+	return d.activeCount
+}
+func (d disposition) PreparingCount() int {
+	return d.preparingCount
+}
+
+func (p *Provider) RunnerDisposition(ctx context.Context) (interfaces.RunnerDispositionMetrics, error) {
+	listRes, err := p.client.Instances.List(p.projectID, p.zone).Filter(typeLabelFilter).Context(ctx).Do()
+	if err != nil {
+		return disposition{}, fmt.Errorf("getting instances: %w", err)
+	}
+	res := disposition{}
+	for _, instance := range listRes.Items {
+		status := instance.Labels["status"]
+		switch status {
+		case labelStatusPreparing:
+			res.preparingCount++
+		case labelStatusStarting:
+			res.startingCount++
+		}
+	}
+
+	return res, nil
 }
