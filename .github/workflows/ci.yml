@@ -36,14 +36,15 @@ jobs:
           go-version-file: go.mod
       - name: install autoscaler
         run: |
-          cd cmd/actions-runner-ephemeral-autoscaler-lxd
+          cd cmd/actions-runner-ephemeral-autoscaler
           go install
       - name: start autoscaler
         env:
           DO_PREPARE: true
           GITHUB_TOKEN: ${{ secrets.TEST_REPO_PAT }}
         run: |
-          actions-runner-ephemeral-autoscaler-lxd \
+          actions-runner-ephemeral-autoscaler \
+            -provider lxd \
             -org ${{ vars.TEST_ORG }} \
             -repo ${{ vars.TEST_REPO }} \
             -labels ${{ env.RUNNER_LABEL }} \

@@ -11,9 +11,9 @@ It currently only supports LXD while in development. See issues for planned work
 Create a github PAT with administration scope on your repository. Set `DO_PREPARE=true` on the first run to create the correct image.
 
 ```
-go install github.com/gartnera/actions-runner-ephemeral-autoscaler/cmd/actions-runner-ephemeral-autoscaler-lxd@latest
+go install github.com/gartnera/actions-runner-ephemeral-autoscaler/cmd/actions-runner-ephemeral-autoscaler@latest
 
-GITHUB_TOKEN=mytoken actions-runner-ephemeral-autoscaler-lxd -org <github user> -repo <github repo> -labels <comma separated labels>
+GITHUB_TOKEN=mytoken actions-runner-ephemeral-autoscaler -provider lxd -org <github user> -repo <github repo> -labels <comma separated labels>
 ```
 
 You will eventually see autoscaler status information printed stdout:
