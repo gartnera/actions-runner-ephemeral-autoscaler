@@ -1,0 +1,256 @@
+package gcp
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/gartnera/actions-runner-ephemeral-autoscaler/providers/common"
+	"github.com/gartnera/actions-runner-ephemeral-autoscaler/providers/interfaces"
+	compute "google.golang.org/api/compute/v1"
+	"google.golang.org/api/option"
+
+	"github.com/samber/lo"
+)
+
+const actionsRunnerEphemeralKey = "user.actions-runner-ephemeral"
+const imageAliasLabel = "actions-runner-ephemeral"
+
+type Provider struct {
+	client    *compute.Service
+	projectID string
+	zone      string
+}
+
+func New() (*Provider, error) {
+	ctx := context.Background()
+	client, err := compute.NewService(ctx, option.WithoutAuthentication())
+	if err != nil {
+		return nil, fmt.Errorf("create compute client: %w", err)
+	}
+
+	return &Provider{
+		client:    client,
+		projectID: "default",
+		zone:      "us-central1-a",
+	}, nil
+}
+
+func (p *Provider) getLatestImage(ctx context.Context) (*compute.Image, error) {
+	resp, err := p.client.Images.List(p.projectID).Filter(fmt.Sprintf("labels.type=%s", imageAliasLabel)).Context(ctx).OrderBy("createdTimestamp desc").Do()
+	if err != nil {
+		return nil, fmt.Errorf("list images: %w", err)
+	}
+
+	if len(resp.Items) == 0 {
+		return nil, nil
+	}
+
+	return resp.Items[0], nil
+}
+func (p *Provider) ImageCreatedAt(ctx context.Context) (time.Time, error) {
+	image, err := p.getLatestImage(ctx)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("get latest image: %w", err)
+	}
+	if image == nil {
+		return time.Time{}, nil
+	}
+
+	return time.Parse(time.RFC3339, image.CreationTimestamp)
+}
+
+func (p *Provider) PrepareImage(ctx context.Context, opts interfaces.PrepareOptions) error {
+	instanceName := fmt.Sprintf("%s-prepare", imageAliasLabel)
+	cloudInitPrepare, err := common.GetCloudInitPrepare(ctx, opts.CustomCloudInitOverlay)
+	if err != nil {
+		return fmt.Errorf("get cloud init prepare: %w", err)
+	}
+
+	instance := &compute.Instance{
+		Name:        instanceName,
+		MachineType: fmt.Sprintf("zones/%s/machineTypes/e2-medium", p.zone),
+		Disks: []*compute.AttachedDisk{
+			{
+				AutoDelete: true,
+				Boot:       true,
+				InitializeParams: &compute.AttachedDiskInitializeParams{
+					SourceImage: "projects/ubuntu-os-cloud/global/images/family/ubuntu-2204-lts",
+				},
+			},
+		},
+		NetworkInterfaces: []*compute.NetworkInterface{
+			{
+				Network: "global/networks/default",
+			},
+		},
+		Metadata: &compute.Metadata{
+			Items: []*compute.MetadataItems{
+				{
+					Key:   "user-data",
+					Value: &cloudInitPrepare,
+				},
+			},
+		},
+		ServiceAccounts: []*compute.ServiceAccount{
+			{
+				Email: "default",
+				Scopes: []string{
+					compute.ComputeScope,
+				},
+			},
+		},
+		Scheduling: &compute.Scheduling{
+			MaxRunDuration: &compute.Duration{
+				Seconds: 15 * 60,
+			},
+			InstanceTerminationAction: "DELETE",
+		},
+	}
+
+	op, err := p.client.Instances.Insert(p.projectID, p.zone, instance).Context(ctx).Do()
+	if err != nil {
+		return fmt.Errorf("create instance: %w", err)
+	}
+
+	err = p.waitOperation(ctx, op)
+	if err != nil {
+		return fmt.Errorf("wait for instance creation: %w", err)
+	}
+
+	// Wait for instance to stop (indicating setup is complete)
+	for {
+		inst, err := p.client.Instances.Get(p.projectID, p.zone, instanceName).Context(ctx).Do()
+		if err != nil {
+			return fmt.Errorf("get instance status: %w", err)
+		}
+
+		if inst.Status == "STOPPED" {
+			break
+		}
+
+		time.Sleep(10 * time.Second)
+	}
+
+	// Create new image
+	newImageName := fmt.Sprintf("%s-%s", imageAliasLabel, lo.RandomString(5, lo.LettersCharset))
+	imageOp, err := p.client.Images.Insert(p.projectID, &compute.Image{
+		Name: newImageName,
+		Labels: map[string]string{
+			"type": imageAliasLabel,
+		},
+		SourceDisk: fmt.Sprintf("projects/%s/zones/%s/disks/%s",
+			p.projectID, p.zone, instanceName),
+	}).Context(ctx).Do()
+
+	if err != nil {
+		return fmt.Errorf("create new image: %w", err)
+	}
+
+	// Wait for new image creation to complete
+	err = p.waitOperation(ctx, imageOp)
+	if err != nil {
+		return fmt.Errorf("wait for new image creation: %w", err)
+	}
+
+	// Delete old images
+	images, err := p.client.Images.List(p.projectID).Filter(fmt.Sprintf("labels.type=%s", imageAliasLabel)).Context(ctx).Do()
+	if err != nil {
+		return fmt.Errorf("list old images: %w", err)
+	}
+
+	for _, image := range images.Items {
+		if image.Name != newImageName {
+			_, err := p.client.Images.Delete(p.projectID, image.Name).Context(ctx).Do()
+			if err != nil {
+				return fmt.Errorf("delete old image %s: %w", image.Name, err)
+			}
+		}
+	}
+
+	// Delete the preparation instance
+	_, err = p.client.Instances.Delete(p.projectID, p.zone, instanceName).Context(ctx).Do()
+	if err != nil {
+		return fmt.Errorf("delete instance: %w", err)
+	}
+
+	return nil
+}
+
+func (p *Provider) CreateRunner(ctx context.Context, url, token, labels string) error {
+	instanceName := fmt.Sprintf("actions-runner-ephemeral-%s", lo.RandomString(5, lo.LettersCharset))
+	cloudInitConf := common.GetCloudInitStart(url, token, labels)
+
+	latestImage, err := p.getLatestImage(ctx)
+	if err != nil {
+		return fmt.Errorf("get latest image: %w", err)
+	}
+	if latestImage == nil {
+		return fmt.Errorf("no runner image found")
+	}
+
+	instance := &compute.Instance{
+		Name:        instanceName,
+		MachineType: fmt.Sprintf("zones/%s/machineTypes/e2-medium", p.zone),
+		Disks: []*compute.AttachedDisk{
+			{
+				AutoDelete: true,
+				Boot:       true,
+				InitializeParams: &compute.AttachedDiskInitializeParams{
+					SourceImage: fmt.Sprintf("projects/%s/global/images/%s", p.projectID, latestImage.Name),
+				},
+			},
+		},
+		NetworkInterfaces: []*compute.NetworkInterface{
+			{
+				Network: "global/networks/default",
+			},
+		},
+		Metadata: &compute.Metadata{
+			Items: []*compute.MetadataItems{
+				{
+					Key:   "user-data",
+					Value: &cloudInitConf,
+				},
+			},
+		},
+		ServiceAccounts: []*compute.ServiceAccount{
+			{
+				Email: "default",
+				Scopes: []string{
+					compute.ComputeScope,
+				},
+			},
+		},
+	}
+
+	op, err := p.client.Instances.Insert(p.projectID, p.zone, instance).Context(ctx).Do()
+	if err != nil {
+		return fmt.Errorf("create instance: %w", err)
+	}
+
+	err = p.waitOperation(ctx, op)
+	if err != nil {
+		return fmt.Errorf("wait for instance creation: %w", err)
+	}
+
+	return nil
+}
+
+func (p *Provider) waitOperation(ctx context.Context, op *compute.Operation) error {
+	for {
+		result, err := p.client.ZoneOperations.Get(p.projectID, p.zone, op.Name).Context(ctx).Do()
+		if err != nil {
+			return fmt.Errorf("get operation: %w", err)
+		}
+
+		if result.Status == "DONE" {
+			if result.Error != nil {
+				return fmt.Errorf("operation failed: %v", result.Error)
+			}
+			return nil
+		}
+
+		time.Sleep(time.Second * 5)
+	}
+}
