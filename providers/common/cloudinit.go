@@ -30,6 +30,9 @@ func GetCloudInitPrepare(ctx context.Context, customInitOverlays ...string) (str
 
 	// Apply each overlay in sequence
 	for _, overlay := range customInitOverlays {
+		if overlay == "" {
+			continue
+		}
 		var overlayNode yaml.Node
 		err = yaml.Unmarshal([]byte(overlay), &overlayNode)
 		if err != nil {
