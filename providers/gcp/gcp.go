@@ -3,12 +3,13 @@ package gcp
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/gartnera/actions-runner-ephemeral-autoscaler/providers/common"
 	"github.com/gartnera/actions-runner-ephemeral-autoscaler/providers/interfaces"
 	compute "google.golang.org/api/compute/v1"
-	"google.golang.org/api/option"
 
 	"github.com/samber/lo"
 )
@@ -16,6 +17,7 @@ import (
 const labelStatusPreparing = "preparing"
 const labelStatusStarting = "starting"
 
+// must be lowercase because of gcp api requirements
 const typeLabelValue = "actions-runner-ephemeral"
 
 var typeLabelFilter = fmt.Sprintf("labels.type=%s", typeLabelValue)
@@ -26,22 +28,27 @@ type Provider struct {
 	zone      string
 }
 
+func getRegionFromZone(zone string) string {
+	parts := strings.Split(zone, "-")
+	return strings.Join(parts[:len(parts)-1], "-")
+}
+
 func New() (*Provider, error) {
 	ctx := context.Background()
-	client, err := compute.NewService(ctx, option.WithoutAuthentication())
+	client, err := compute.NewService(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("create compute client: %w", err)
 	}
 
 	return &Provider{
 		client:    client,
-		projectID: "default",
+		projectID: "gha-ephemeral-autoscaler-test",
 		zone:      "us-central1-a",
 	}, nil
 }
 
 func (p *Provider) getLatestImage(ctx context.Context) (*compute.Image, error) {
-	resp, err := p.client.Images.List(p.projectID).Filter(typeLabelFilter).Context(ctx).OrderBy("createdTimestamp desc").Do()
+	resp, err := p.client.Images.List(p.projectID).Filter(typeLabelFilter).Context(ctx).Do()
 	if err != nil {
 		return nil, fmt.Errorf("list images: %w", err)
 	}
@@ -50,7 +57,12 @@ func (p *Provider) getLatestImage(ctx context.Context) (*compute.Image, error) {
 		return nil, nil
 	}
 
-	return resp.Items[0], nil
+	// Sort images by creation timestamp in descending order
+	images := resp.Items
+	sort.Slice(images, func(i, j int) bool {
+		return images[i].CreationTimestamp > images[j].CreationTimestamp
+	})
+	return images[0], nil
 }
 func (p *Provider) ImageCreatedAt(ctx context.Context) (time.Time, error) {
 	image, err := p.getLatestImage(ctx)
@@ -73,7 +85,7 @@ func (p *Provider) PrepareImage(ctx context.Context, opts interfaces.PrepareOpti
 
 	instance := &compute.Instance{
 		Name:        instanceName,
-		MachineType: fmt.Sprintf("zones/%s/machineTypes/e2-micro", p.zone),
+		MachineType: fmt.Sprintf("zones/%s/machineTypes/e2-medium", p.zone),
 		Labels: map[string]string{
 			"type":   typeLabelValue,
 			"status": labelStatusPreparing,
@@ -90,6 +102,13 @@ func (p *Provider) PrepareImage(ctx context.Context, opts interfaces.PrepareOpti
 		NetworkInterfaces: []*compute.NetworkInterface{
 			{
 				Network: "global/networks/default",
+				AccessConfigs: []*compute.AccessConfig{
+					{
+						Name:        "External NAT",
+						Type:        "ONE_TO_ONE_NAT",
+						NetworkTier: "STANDARD",
+					},
+				},
 			},
 		},
 		Metadata: &compute.Metadata{
@@ -133,7 +152,7 @@ func (p *Provider) PrepareImage(ctx context.Context, opts interfaces.PrepareOpti
 			return fmt.Errorf("get instance status: %w", err)
 		}
 
-		if inst.Status == "STOPPED" {
+		if inst.Status == "TERMINATED" {
 			break
 		}
 
@@ -141,7 +160,7 @@ func (p *Provider) PrepareImage(ctx context.Context, opts interfaces.PrepareOpti
 	}
 
 	// Create new image
-	newImageName := fmt.Sprintf("%s-%s", typeLabelValue, lo.RandomString(5, lo.LettersCharset))
+	newImageName := fmt.Sprintf("%s-%s", typeLabelValue, lo.RandomString(5, lo.LowerCaseLettersCharset))
 	imageOp, err := p.client.Images.Insert(p.projectID, &compute.Image{
 		Name: newImageName,
 		Labels: map[string]string{
@@ -149,6 +168,9 @@ func (p *Provider) PrepareImage(ctx context.Context, opts interfaces.PrepareOpti
 		},
 		SourceDisk: fmt.Sprintf("projects/%s/zones/%s/disks/%s",
 			p.projectID, p.zone, instanceName),
+		StorageLocations: []string{
+			getRegionFromZone(p.zone),
+		},
 	}).Context(ctx).Do()
 
 	if err != nil {
@@ -186,7 +208,7 @@ func (p *Provider) PrepareImage(ctx context.Context, opts interfaces.PrepareOpti
 }
 
 func (p *Provider) CreateRunner(ctx context.Context, url, token, labels string) error {
-	instanceName := fmt.Sprintf("actions-runner-ephemeral-%s", lo.RandomString(5, lo.LettersCharset))
+	instanceName := fmt.Sprintf("actions-runner-ephemeral-%s", lo.RandomString(5, lo.LowerCaseLettersCharset))
 	cloudInitConf := common.GetCloudInitStart(url, token, labels)
 
 	latestImage, err := p.getLatestImage(ctx)
@@ -216,6 +238,13 @@ func (p *Provider) CreateRunner(ctx context.Context, url, token, labels string) 
 		NetworkInterfaces: []*compute.NetworkInterface{
 			{
 				Network: "global/networks/default",
+				AccessConfigs: []*compute.AccessConfig{
+					{
+						Name:        "External NAT",
+						Type:        "ONE_TO_ONE_NAT",
+						NetworkTier: "STANDARD",
+					},
+				},
 			},
 		},
 		Metadata: &compute.Metadata{
@@ -234,6 +263,9 @@ func (p *Provider) CreateRunner(ctx context.Context, url, token, labels string) 
 				},
 			},
 		},
+		Scheduling: &compute.Scheduling{
+			InstanceTerminationAction: "DELETE",
+		},
 	}
 
 	op, err := p.client.Instances.Insert(p.projectID, p.zone, instance).Context(ctx).Do()
@@ -251,7 +283,18 @@ func (p *Provider) CreateRunner(ctx context.Context, url, token, labels string) 
 
 func (p *Provider) waitOperation(ctx context.Context, op *compute.Operation) error {
 	for {
-		result, err := p.client.ZoneOperations.Get(p.projectID, p.zone, op.Name).Context(ctx).Do()
+		// sleep first since operations may 404 after creation
+		time.Sleep(5 * time.Second)
+
+		var result *compute.Operation
+		var err error
+
+		if op.Zone != "" {
+			result, err = p.client.ZoneOperations.Get(p.projectID, p.zone, op.Name).Context(ctx).Do()
+		} else {
+			result, err = p.client.GlobalOperations.Get(p.projectID, op.Name).Context(ctx).Do()
+		}
+
 		if err != nil {
 			return fmt.Errorf("get operation: %w", err)
 		}
@@ -262,8 +305,6 @@ func (p *Provider) waitOperation(ctx context.Context, op *compute.Operation) err
 			}
 			return nil
 		}
-
-		time.Sleep(time.Second * 5)
 	}
 }
 
