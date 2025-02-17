@@ -402,6 +402,7 @@ func (p *Provider) RunnerDisposition(ctx context.Context) (interfaces.RunnerDisp
 			res.stoppedCount++
 			continue
 		}
+
 		labelStatus := instance.Labels["status"]
 		switch labelStatus {
 		case "active":

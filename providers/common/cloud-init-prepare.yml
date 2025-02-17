@@ -20,6 +20,12 @@ write_files:
     content: |
       #!/bin/bash
       echo "active" > /tmp/actions-runner-state
+  - path: /opt/runner-hooks/finished/99-poweroff
+    owner: 'root:root'
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      /usr/bin/sudo /usr/sbin/poweroff
   - path: /opt/runner-hooks/job-started.sh
     owner: 'root:root'
     permissions: '0755'
@@ -37,7 +43,7 @@ write_files:
       [Service]
       ExecStart={{RunnerRoot}}/runsvc.sh
       ExecStartPost=/usr/bin/run-parts /opt/runner-hooks/idle
-      ExecStopPost=/usr/bin/sudo /usr/sbin/poweroff
+      ExecStopPost=/usr/bin/run-parts /opt/runner-hooks/finished
       User={{User}}
       WorkingDirectory={{RunnerRoot}}
       Environment=ACTIONS_RUNNER_HOOK_JOB_STARTED=/opt/runner-hooks/job-started.sh
