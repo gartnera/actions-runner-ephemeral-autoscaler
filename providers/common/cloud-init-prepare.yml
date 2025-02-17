@@ -5,7 +5,7 @@ users:
     groups: [sudo]
     sudo: ['ALL=(ALL) NOPASSWD:ALL']
     shell: /bin/bash
-    system: true
+    create_home: true
 
 write_files:
   - path: /opt/runner-hooks/idle/10-set-actions-runner-state

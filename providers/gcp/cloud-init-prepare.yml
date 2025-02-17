@@ -1,0 +1,24 @@
+#cloud-config
+write_files:
+  - path: /opt/runner-hooks/update-gcloud-status-label
+    owner: 'root:root'
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      INSTANCE_NAME=$(curl -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/name)
+      ZONE=$(curl -H "Metadata-Flavor: Google" http://metadata.google.internal/computeMetadata/v1/instance/zone | cut -d'/' -f4)
+      gcloud compute instances add-labels $INSTANCE_NAME --zone=$ZONE --labels=status=$1
+  - path: /opt/runner-hooks/idle/20-gcloud-label
+    owner: 'root:root'
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      /opt/runner-hooks/update-gcloud-status-label idle
+  - path: /opt/runner-hooks/job-started/20-gcloud-label
+    owner: 'root:root'
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      /opt/runner-hooks/update-gcloud-status-label active
+runcmd:
+  - sudo -u runner gcloud

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	_ "embed"
+
 	"github.com/gartnera/actions-runner-ephemeral-autoscaler/providers/common"
 	"github.com/gartnera/actions-runner-ephemeral-autoscaler/providers/interfaces"
 	compute "google.golang.org/api/compute/v1"
@@ -22,6 +24,9 @@ const labelStatusStarting = "starting"
 const typeLabelValue = "actions-runner-ephemeral"
 
 var typeLabelFilter = fmt.Sprintf("labels.type=%s", typeLabelValue)
+
+//go:embed cloud-init-prepare.yml
+var cloudInitPrepareOverlay string
 
 type Provider struct {
 	client    *compute.Service
@@ -102,7 +107,7 @@ func (p *Provider) ImageCreatedAt(ctx context.Context) (time.Time, error) {
 
 func (p *Provider) PrepareImage(ctx context.Context, opts interfaces.PrepareOptions) error {
 	instanceName := fmt.Sprintf("%s-prepare", typeLabelValue)
-	cloudInitPrepare, err := common.GetCloudInitPrepare(ctx, opts.CustomCloudInitOverlay)
+	cloudInitPrepare, err := common.GetCloudInitPrepare(ctx, cloudInitPrepareOverlay, opts.CustomCloudInitOverlay)
 	if err != nil {
 		return fmt.Errorf("get cloud init prepare: %w", err)
 	}
@@ -269,7 +274,8 @@ func (p *Provider) CreateRunner(ctx context.Context, url, token, labels string) 
 
 	// instance is a pointer so we can update it after setting it
 	opBuilder := p.client.Instances.Insert(p.projectID, p.zone, instance).Context(ctx)
-	opBuilder = opBuilder.SourceInstanceTemplate(latestImage.SelfLink)
+
+	sourceImagePath := fmt.Sprintf("projects/%s/global/images/%s", p.projectID, latestImage.Name)
 
 	if p.template == "" {
 		instance.MachineType = fmt.Sprintf("zones/%s/machineTypes/e2-medium", p.zone)
@@ -277,6 +283,9 @@ func (p *Provider) CreateRunner(ctx context.Context, url, token, labels string) 
 			{
 				AutoDelete: true,
 				Boot:       true,
+				InitializeParams: &compute.AttachedDiskInitializeParams{
+					SourceImage: sourceImagePath,
+				},
 			},
 		}
 		instance.NetworkInterfaces = []*compute.NetworkInterface{
@@ -300,6 +309,20 @@ func (p *Provider) CreateRunner(ctx context.Context, url, token, labels string) 
 			},
 		}
 	} else {
+		template, err := p.client.InstanceTemplates.Get(p.projectID, p.template).Context(ctx).Do()
+		if err != nil {
+			return fmt.Errorf("get instance template: %w", err)
+		}
+
+		// Copy the template disks but override the boot disk's source image.
+		// This would allow for other disks (like local SSDs) to be attached.
+		instance.Disks = template.Properties.Disks
+		for _, disk := range instance.Disks {
+			if disk.Boot {
+				disk.InitializeParams.SourceImage = sourceImagePath
+				break
+			}
+		}
 		opBuilder = opBuilder.SourceInstanceTemplate(p.template)
 	}
 
@@ -348,10 +371,11 @@ type disposition struct {
 	idleCount      int
 	activeCount    int
 	preparingCount int
+	stoppedCount   int
 }
 
 func (d disposition) TotalCount() int {
-	return d.activeCount + d.idleCount + d.startingCount
+	return d.activeCount + d.idleCount + d.startingCount + d.stoppedCount
 }
 func (d disposition) StartingCount() int {
 	return d.startingCount
@@ -373,8 +397,17 @@ func (p *Provider) RunnerDisposition(ctx context.Context) (interfaces.RunnerDisp
 	}
 	res := disposition{}
 	for _, instance := range listRes.Items {
-		status := instance.Labels["status"]
-		switch status {
+		switch instance.Status {
+		case "STOPPING", "STOPPED", "TERMINATED":
+			res.stoppedCount++
+			continue
+		}
+		labelStatus := instance.Labels["status"]
+		switch labelStatus {
+		case "active":
+			res.activeCount++
+		case "idle":
+			res.idleCount++
 		case labelStatusPreparing:
 			res.preparingCount++
 		case labelStatusStarting:
