@@ -97,7 +97,7 @@ func (a *Autoscaler) maybePrepare(ctx context.Context) error {
 func (a *Autoscaler) Autoscale(ctx context.Context, checkPrepare bool) error {
 	if checkPrepare {
 		err := a.maybePrepare(ctx)
-		if err == nil {
+		if err != nil {
 			log.Default().Printf("error when preparing: %v", err)
 		}
 	}
