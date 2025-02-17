@@ -3,6 +3,7 @@ package gcp
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -26,11 +27,20 @@ type Provider struct {
 	client    *compute.Service
 	projectID string
 	zone      string
+	template  string
 }
 
 func getRegionFromZone(zone string) string {
 	parts := strings.Split(zone, "-")
 	return strings.Join(parts[:len(parts)-1], "-")
+}
+
+func mustGetEnv(key string) (string, error) {
+	res, ok := os.LookupEnv(key)
+	if !ok {
+		return "", fmt.Errorf("%s must be set", key)
+	}
+	return res, nil
 }
 
 func New() (*Provider, error) {
@@ -40,10 +50,23 @@ func New() (*Provider, error) {
 		return nil, fmt.Errorf("create compute client: %w", err)
 	}
 
+	project, err := mustGetEnv("GOOGLE_CLOUD_PROJECT")
+	if err != nil {
+		return nil, err
+	}
+
+	zone, err := mustGetEnv("GOOGLE_CLOUD_ZONE")
+	if err != nil {
+		return nil, err
+	}
+
+	template := os.Getenv("GOOGLE_CLOUD_INSTANCE_TEMPLATE")
+
 	return &Provider{
 		client:    client,
-		projectID: "gha-ephemeral-autoscaler-test",
-		zone:      "us-central1-a",
+		projectID: project,
+		zone:      zone,
+		template:  template,
 	}, nil
 }
 
@@ -64,6 +87,7 @@ func (p *Provider) getLatestImage(ctx context.Context) (*compute.Image, error) {
 	})
 	return images[0], nil
 }
+
 func (p *Provider) ImageCreatedAt(ctx context.Context) (time.Time, error) {
 	image, err := p.getLatestImage(ctx)
 	if err != nil {
@@ -84,46 +108,16 @@ func (p *Provider) PrepareImage(ctx context.Context, opts interfaces.PrepareOpti
 	}
 
 	instance := &compute.Instance{
-		Name:        instanceName,
-		MachineType: fmt.Sprintf("zones/%s/machineTypes/e2-medium", p.zone),
+		Name: instanceName,
 		Labels: map[string]string{
 			"type":   typeLabelValue,
 			"status": labelStatusPreparing,
-		},
-		Disks: []*compute.AttachedDisk{
-			{
-				AutoDelete: true,
-				Boot:       true,
-				InitializeParams: &compute.AttachedDiskInitializeParams{
-					SourceImage: "projects/ubuntu-os-cloud/global/images/family/ubuntu-2204-lts",
-				},
-			},
-		},
-		NetworkInterfaces: []*compute.NetworkInterface{
-			{
-				Network: "global/networks/default",
-				AccessConfigs: []*compute.AccessConfig{
-					{
-						Name:        "External NAT",
-						Type:        "ONE_TO_ONE_NAT",
-						NetworkTier: "STANDARD",
-					},
-				},
-			},
 		},
 		Metadata: &compute.Metadata{
 			Items: []*compute.MetadataItems{
 				{
 					Key:   "user-data",
 					Value: &cloudInitPrepare,
-				},
-			},
-		},
-		ServiceAccounts: []*compute.ServiceAccount{
-			{
-				Email: "default",
-				Scopes: []string{
-					compute.ComputeScope,
 				},
 			},
 		},
@@ -135,7 +129,45 @@ func (p *Provider) PrepareImage(ctx context.Context, opts interfaces.PrepareOpti
 		},
 	}
 
-	op, err := p.client.Instances.Insert(p.projectID, p.zone, instance).Context(ctx).Do()
+	// instance is a pointer so we can update it after setting it
+	opBuilder := p.client.Instances.Insert(p.projectID, p.zone, instance).Context(ctx)
+
+	if p.template == "" {
+		instance.MachineType = fmt.Sprintf("zones/%s/machineTypes/e2-medium", p.zone)
+		instance.Disks = []*compute.AttachedDisk{
+			{
+				AutoDelete: true,
+				Boot:       true,
+				InitializeParams: &compute.AttachedDiskInitializeParams{
+					SourceImage: "projects/ubuntu-os-cloud/global/images/family/ubuntu-2204-lts",
+				},
+			},
+		}
+		instance.NetworkInterfaces = []*compute.NetworkInterface{
+			{
+				Network: "global/networks/default",
+				AccessConfigs: []*compute.AccessConfig{
+					{
+						Name:        "External NAT",
+						Type:        "ONE_TO_ONE_NAT",
+						NetworkTier: "STANDARD",
+					},
+				},
+			},
+		}
+		instance.ServiceAccounts = []*compute.ServiceAccount{
+			{
+				Email: "default",
+				Scopes: []string{
+					compute.ComputeScope,
+				},
+			},
+		}
+	} else {
+		opBuilder = opBuilder.SourceInstanceTemplate(p.template)
+	}
+
+	op, err := opBuilder.Do()
 	if err != nil {
 		return fmt.Errorf("create instance: %w", err)
 	}
@@ -220,22 +252,34 @@ func (p *Provider) CreateRunner(ctx context.Context, url, token, labels string) 
 	}
 
 	instance := &compute.Instance{
-		Name:        instanceName,
-		MachineType: fmt.Sprintf("zones/%s/machineTypes/e2-micro", p.zone),
+		Name: instanceName,
 		Labels: map[string]string{
 			"type":   typeLabelValue,
 			"status": labelStatusStarting,
 		},
-		Disks: []*compute.AttachedDisk{
-			{
-				AutoDelete: true,
-				Boot:       true,
-				InitializeParams: &compute.AttachedDiskInitializeParams{
-					SourceImage: fmt.Sprintf("projects/%s/global/images/%s", p.projectID, latestImage.Name),
+		Metadata: &compute.Metadata{
+			Items: []*compute.MetadataItems{
+				{
+					Key:   "user-data",
+					Value: &cloudInitConf,
 				},
 			},
 		},
-		NetworkInterfaces: []*compute.NetworkInterface{
+	}
+
+	// instance is a pointer so we can update it after setting it
+	opBuilder := p.client.Instances.Insert(p.projectID, p.zone, instance).Context(ctx)
+	opBuilder = opBuilder.SourceInstanceTemplate(latestImage.SelfLink)
+
+	if p.template == "" {
+		instance.MachineType = fmt.Sprintf("zones/%s/machineTypes/e2-medium", p.zone)
+		instance.Disks = []*compute.AttachedDisk{
+			{
+				AutoDelete: true,
+				Boot:       true,
+			},
+		}
+		instance.NetworkInterfaces = []*compute.NetworkInterface{
 			{
 				Network: "global/networks/default",
 				AccessConfigs: []*compute.AccessConfig{
@@ -246,29 +290,20 @@ func (p *Provider) CreateRunner(ctx context.Context, url, token, labels string) 
 					},
 				},
 			},
-		},
-		Metadata: &compute.Metadata{
-			Items: []*compute.MetadataItems{
-				{
-					Key:   "user-data",
-					Value: &cloudInitConf,
-				},
-			},
-		},
-		ServiceAccounts: []*compute.ServiceAccount{
+		}
+		instance.ServiceAccounts = []*compute.ServiceAccount{
 			{
 				Email: "default",
 				Scopes: []string{
 					compute.ComputeScope,
 				},
 			},
-		},
-		Scheduling: &compute.Scheduling{
-			InstanceTerminationAction: "DELETE",
-		},
+		}
+	} else {
+		opBuilder = opBuilder.SourceInstanceTemplate(p.template)
 	}
 
-	op, err := p.client.Instances.Insert(p.projectID, p.zone, instance).Context(ctx).Do()
+	op, err := opBuilder.Do()
 	if err != nil {
 		return fmt.Errorf("create instance: %w", err)
 	}
