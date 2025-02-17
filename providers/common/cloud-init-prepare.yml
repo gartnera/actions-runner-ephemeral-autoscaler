@@ -5,21 +5,33 @@ users:
     groups: [sudo]
     sudo: ['ALL=(ALL) NOPASSWD:ALL']
     shell: /bin/bash
-    system: true
+    create_home: true
 
 write_files:
-  - path: /opt/set-idle.sh
+  - path: /opt/runner-hooks/idle/10-set-actions-runner-state
     owner: 'root:root'
     permissions: '0755'
     content: |
       #!/bin/bash
       echo "idle" > /tmp/actions-runner-state
-  - path: /opt/set-active.sh
+  - path: /opt/runner-hooks/job-started/10-set-actions-runner-state
     owner: 'root:root'
     permissions: '0755'
     content: |
       #!/bin/bash
       echo "active" > /tmp/actions-runner-state
+  - path: /opt/runner-hooks/finished/99-poweroff
+    owner: 'root:root'
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      /usr/bin/sudo /usr/sbin/poweroff
+  - path: /opt/runner-hooks/job-started.sh
+    owner: 'root:root'
+    permissions: '0755'
+    content: |
+      #!/bin/bash
+      /usr/bin/run-parts /opt/runner-hooks/job-started
   - path: /opt/actions.runner.service.template
     owner: 'root:root'
     permissions: '0644'
@@ -27,18 +39,18 @@ write_files:
       [Unit]
       Description={{Description}}
       After=network.target
-      
+
       [Service]
       ExecStart={{RunnerRoot}}/runsvc.sh
-      ExecStartPost=/opt/set-idle.sh
-      ExecStopPost=/usr/bin/sudo /usr/sbin/poweroff
+      ExecStartPost=/usr/bin/run-parts /opt/runner-hooks/idle
+      ExecStopPost=/usr/bin/run-parts /opt/runner-hooks/finished
       User={{User}}
       WorkingDirectory={{RunnerRoot}}
-      Environment=ACTIONS_RUNNER_HOOK_JOB_STARTED=/opt/set-active.sh
+      Environment=ACTIONS_RUNNER_HOOK_JOB_STARTED=/opt/runner-hooks/job-started.sh
       KillMode=process
       KillSignal=SIGTERM
       TimeoutStopSec=5min
-      
+
       [Install]
       WantedBy=multi-user.target
 
