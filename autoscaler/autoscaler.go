@@ -103,7 +103,7 @@ func (a *Autoscaler) Autoscale(ctx context.Context, checkPrepare bool) error {
 	}
 	metrics, err := a.provider.RunnerDisposition(ctx)
 	if err != nil {
-		return fmt.Errorf("get runner disposition")
+		return fmt.Errorf("get runner disposition: %w", err)
 	}
 
 	updateMetrics(metrics)
@@ -123,6 +123,19 @@ func (a *Autoscaler) Autoscale(ctx context.Context, checkPrepare bool) error {
 			return fmt.Errorf("create runner: %w", err)
 		}
 		log.Println("instance created")
+	}
+	return nil
+}
+
+func (a *Autoscaler) Cleanup(ctx context.Context) error {
+	metrics, err := a.provider.RunnerDisposition(ctx)
+	if err != nil {
+		return fmt.Errorf("get runner disposition: %w", err)
+	}
+	deleteCount := metrics.IdleCount() + metrics.StartingCount()
+	err = a.provider.DeleteRunners(ctx, deleteCount, false)
+	if err != nil {
+		return fmt.Errorf("delete runners: %w", err)
 	}
 	return nil
 }

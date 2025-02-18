@@ -339,6 +339,52 @@ func (p *Provider) CreateRunner(ctx context.Context, url, token, labels string) 
 	return nil
 }
 
+// DeleteRunners deletes N runner instances
+func (p *Provider) DeleteRunners(ctx context.Context, count int, wait bool) error {
+	listRes, err := p.client.Instances.List(p.projectID, p.zone).Filter(typeLabelFilter).Context(ctx).Do()
+	if err != nil {
+		return fmt.Errorf("listing instances: %w", err)
+	}
+
+	var instances []*compute.Instance
+	for _, instance := range listRes.Items {
+		if instance.Labels["status"] != "active" {
+			instances = append(instances, instance)
+		}
+	}
+
+	// Create a slice to store operations
+	var operations []*compute.Operation
+
+	// Delete up to count instances
+	for i := 0; i < count && i < len(instances); i++ {
+		op, err := p.client.Instances.Delete(p.projectID, p.zone, instances[i].Name).Context(ctx).Do()
+		if err != nil {
+			return fmt.Errorf("deleting instance %s: %w", instances[i].Name, err)
+		}
+
+		if wait {
+			err = p.waitOperation(ctx, op)
+			if err != nil {
+				return fmt.Errorf("waiting for instance deletion %s: %w", instances[i].Name, err)
+			}
+		}
+		operations = append(operations, op)
+	}
+
+	// Wait for all operations to complete if wait is true
+	if wait {
+		for _, op := range operations {
+			err := p.waitOperation(ctx, op)
+			if err != nil {
+				return fmt.Errorf("waiting for instance deletion: %w", err)
+			}
+		}
+	}
+
+	return nil
+}
+
 func (p *Provider) waitOperation(ctx context.Context, op *compute.Operation) error {
 	for {
 		// sleep first since operations may 404 after creation
