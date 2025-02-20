@@ -195,6 +195,42 @@ func (p *Provider) CreateRunner(ctx context.Context, url, token, labels string) 
 	return nil
 }
 
+// DeleteRunners deletes N runner instances. If wait is true, it waits for the deletion to complete.
+//
+// All we have to do is stop the runner since the instances are ephemeral
+func (p *Provider) DeleteRunners(ctx context.Context, count int, wait bool) error {
+	instances, err := p.client.GetInstancesWithFilter(api.InstanceTypeContainer, []string{fmt.Sprintf("config.%s=true", actionsRunnerEphemeralKey)})
+	if err != nil {
+		return fmt.Errorf("getting instances: %w", err)
+	}
+
+	// Start stop operations for up to count instances
+	stopOps := make([]lxdClient.Operation, 0, count)
+	stopNames := make([]string, 0, count)
+	for i := 0; i < count && i < len(instances); i++ {
+		// Stop the instance
+		stopOp, err := p.client.UpdateInstanceState(instances[i].Name, api.InstanceStatePut{Action: "stop"}, "")
+		if err != nil {
+			return fmt.Errorf("stop instance %s: %w", instances[i].Name, err)
+		}
+		stopOps = append(stopOps, stopOp)
+		stopNames = append(stopNames, instances[i].Name)
+	}
+
+	// Wait for all stop operations to complete
+	if wait {
+		for i, op := range stopOps {
+			op.Get()
+			err = op.Wait()
+			if err != nil {
+				return fmt.Errorf("waiting for instance stop %s: %w", stopNames[i], err)
+			}
+		}
+	}
+
+	return nil
+}
+
 type disposition struct {
 	startingCount int
 	idleCount     int

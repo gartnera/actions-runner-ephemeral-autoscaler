@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/gartnera/actions-runner-ephemeral-autoscaler/autoscaler"
@@ -75,13 +77,41 @@ func main() {
 		PrepareOptions: prepareOpts,
 	})
 
+	// only clear resources on SIGINT
+	sigIntChan := make(chan os.Signal, 1)
+	signal.Notify(sigIntChan, syscall.SIGINT, syscall.SIGTERM)
+	ctx, cancel := context.WithCancel(ctx)
+	go func() {
+		sig := <-sigIntChan
+		if sig == syscall.SIGTERM {
+			os.Exit(0)
+		}
+		fmt.Printf("Received signal %v, clearing existing resources...\n", sig)
+		cancel()
+	}()
+
+	ticker := time.NewTicker(time.Second * 2)
+
 	for i := 0; ; i++ {
 		// check prepare every 500 iterations (including first)
 		shouldCheckPrepare := i%500 == 0
 		err := autoscaler.Autoscale(ctx, shouldCheckPrepare)
 		if err != nil {
-			fmt.Printf("autoscale failed: %v\n", err)
+			if ctx.Err() != nil {
+				if ctx.Err() == nil {
+					fmt.Printf("autoscale failed: %v\n", err)
+				}
+			}
 		}
-		time.Sleep(time.Second * 2)
+		select {
+		case <-ticker.C:
+		case <-ctx.Done():
+			ctx := context.Background()
+			err := autoscaler.Cleanup(ctx)
+			if err != nil {
+				fmt.Printf("cleanup failed: %v\n", err)
+			}
+			return
+		}
 	}
 }

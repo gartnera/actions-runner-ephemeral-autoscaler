@@ -29,6 +29,11 @@ type Provider interface {
 	// CreateRunner creates a new runner instance
 	CreateRunner(ctx context.Context, url, token, labels string) error
 
+	// DeleteRunners deletes N runner instances
+	//
+	// wait should be set to true running in the autoscaler loop
+	DeleteRunners(ctx context.Context, count int, wait bool) error
+
 	// RunnerDisposition returns the current state of runners
 	RunnerDisposition(ctx context.Context) (RunnerDispositionMetrics, error)
 }
