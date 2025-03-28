@@ -5,10 +5,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
-	lxdClient "github.com/canonical/lxd/client"
+	lxd "github.com/canonical/lxd/client"
 	"github.com/canonical/lxd/shared/api"
 	"github.com/gartnera/actions-runner-ephemeral-autoscaler/providers/common"
 	"github.com/gartnera/actions-runner-ephemeral-autoscaler/providers/interfaces"
@@ -19,16 +20,22 @@ const actionsRunnerEphemeralKey = "user.actions-runner-ephemeral"
 const imageAliasName = "actions-runner-ephemeral"
 
 type Provider struct {
-	client lxdClient.InstanceServer
+	client lxd.InstanceServer
 }
 
 func New() (*Provider, error) {
-	lxd, err := lxdClient.ConnectLXDUnix("", nil)
+	client, err := lxd.ConnectLXDUnix("", nil)
 	if err != nil {
 		return nil, err
 	}
+
+	projectName, ok := os.LookupEnv("LXD_PROJECT")
+	if ok {
+		client = client.UseProject(projectName)
+	}
+
 	return &Provider{
-		client: lxd,
+		client: client,
 	}, nil
 }
 
@@ -205,7 +212,7 @@ func (p *Provider) DeleteRunners(ctx context.Context, count int, wait bool) erro
 	}
 
 	// Start stop operations for up to count instances
-	stopOps := make([]lxdClient.Operation, 0, count)
+	stopOps := make([]lxd.Operation, 0, count)
 	stopNames := make([]string, 0, count)
 	for i := 0; i < count && i < len(instances); i++ {
 		// Stop the instance
